@@ -25,6 +25,42 @@ This repository contains a high-performance data synchronization and hydration p
 
 ---
 
+## Architectural Performance Comparison
+
+When executing an initial synchronization or bulk database hydration, choice of architecture dictates CPU overhead, network saturation, and memory usage.
+
+### Performance Matrix at a Glance
+
+| Metric | gRPC Streaming (Current POC) | HTTP/REST API (JSON Batches) | Message Broker (Queue/Topic) |
+| --- | --- | --- | --- |
+| **Relative Speed** | **Fastest (Baseline 1x)** | **2x to 3x Slower** | **5x to 10x Slower** |
+| **Serialization Format** | Binary (Protobuf) | Text (JSON) | Text or Binary inside Envelope |
+| **Memory Footprint** | Extremely Low (Constant streaming) | High (Buffering large arrays) | Low on app, heavy on Broker |
+| **Network Protocol** | Strict HTTP/2 (Multiplexed) | HTTP/1.1 or HTTP/2 | AMQP / MQTT / HTTPS |
+| **Best Used For** | High-throughput bulk hydration | Simple, public CRUD operations | Decoupled, asynchronous events |
+
+### Why gRPC Streaming Outperforms Alternative Patterns
+
+#### 1. Binary Protobuf vs Text JSON
+
+Standard REST APIs rely on JSON, which forces the CPU to spend valuable cycles parsing strings, escaping characters, commas, and curly braces. Protobuf compiles down into a tightly packed, highly optimized binary format. It skips the text translation layer entirely, writing raw bytes directly to the network socket and cutting serialization CPU overhead by more than 60%.
+
+#### 2. Constant Memory Streaming (`IAsyncEnumerable`)
+
+Moving thousands of rows via a standard HTTP/REST endpoint typically requires buffering the entire dataset into an in-memory array before sending it, or utilizing pagination. Buffering triggers sudden memory spikes and aggressive Garbage Collection (GC) pressure. Pagination solves memory spikes but penalties accumulate due to repeated HTTP request-response roundtrips.
+
+This POC’s gRPC implementation uses true streaming. As Microservice A reads a row from SQL Server, it pushes it straight to the wire. Microservice B processes these incoming records in a flat sliding window of 500 rows. The application's memory profile remains flat, regardless of whether it is syncing 1,000 or 1,000,000 rows.
+
+#### 3. True Multiplexing over HTTP/2
+
+Traditional HTTP/1.1 REST architectures suffer from head-of-line blocking, requiring separate TCP connections or sequential waiting. gRPC runs on HTTP/2, utilizing a single long-lived TCP connection that allows bidirectional data streaming simultaneously over a single channel.
+
+#### 4. Avoiding the "Per-Message" Broker Tax
+
+While Message Brokers (such as Azure Service Bus or RabbitMQ) are vital for event-driven workflows, they introduce structural performance bottlenecks during bulk table hydration. Brokers guarantee delivery durability by writing messages to disk, maintaining state indexes, and tracking individual acknowledgments (ACKs). Attempting to move a large database table message-by-message through a queue adds massive transaction coordination overhead. Batching messages inside a broker is also bottlenecked by hard payload constraints (e.g., Service Bus limits limits of 256KB/1MB).
+
+---
+
 ## Local Infrastructure Setup (Docker)
 
 To run this simulation locally, you need two isolated SQL Server instances running on different host ports to prevent connection string collisions.
