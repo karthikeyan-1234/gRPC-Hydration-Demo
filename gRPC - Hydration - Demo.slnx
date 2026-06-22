@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="MicroService A/MicroService A.csproj" />
+  <Project Path="MicroService B/MicroService B.csproj" />
+  <Project Path="SharedLib/SharedLib.csproj" />
+</Solution>

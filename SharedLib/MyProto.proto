@@ -1,0 +1,15 @@
+﻿syntax = "proto3";
+option csharp_namespace = "Hydration.Grpc";
+
+service DataHydration {
+  rpc StreamData (HydrationRequest) returns (stream HydrationPayload);
+}
+
+message HydrationRequest {
+  int32 batch_size = 1;
+}
+
+message HydrationPayload {
+  string id = 1;
+  string payload_data = 2;
+}
