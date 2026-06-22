@@ -14,6 +14,7 @@ This repository contains a high-performance data synchronization and hydration p
 
 * **Prior Knowledge Cleartext Channels**: Custom Kestrel pipeline configuration forcing a strict HTTP/2-only server topology to bypass ALPN negotiation bottlenecks over unencrypted development environments.
 * **Non-Blocking Ingestion Loop**: Writes are enclosed inside an explicit **`SNAPSHOT` isolation transaction**. This provides all-or-nothing atomic data consistency while keeping the target tables completely readable by concurrent client applications during the hydration phase.
+* **Fail-Fast Distributed Locking**: Implements database-level session application locks (`sp_getapplock`) to prevent concurrent race conditions across scaled-out instances without needing external infrastructure like Redis.
 
 ## Tech Stack
 
@@ -125,6 +126,29 @@ CREATE TABLE SyncedBookings (
 GO
 
 ```
+
+---
+
+## Multi-Instance Scale & Distributed Locking
+
+When scaling this architecture to run across multiple instances (such as a scaled-out cloud profile or Kubernetes cluster), the application handles networking and database isolation dynamically.
+
+### gRPC Multi-Instance Routing
+
+* **Connection Pinning:** Because gRPC communicates via long-lived, multiplexed HTTP/2 streams, when an instance of Microservice B initializes a pipeline run, the Layer 7 load balancer maps that specific stream end-to-end to **one** instance of Microservice A.
+* The remaining scaled-out worker instances sit completely idle, ensuring network stability over the lifetime of the ingestion run.
+
+### The Database Concurrency Problem
+
+Because the pipeline uses a `TRUNCATE TABLE` workflow followed by a massive transaction stream inside a `SNAPSHOT` boundary, concurrent manual triggers on multiple instances of Microservice B would create a structural race condition. Two instances attempting to truncate and update identical rows simultaneously will cause SQL Server to throw an **Update Conflict (Error 3960)**, crashing the sync.
+
+### Zero-Infrastructure Solution: SQL Server Application Locks
+
+To guarantee absolute singleton execution without introducing external infrastructure components (like Redis or Consul), Microservice B implements an **Exclusive Session-Level Application Lock** using SQL Server's internal `sp_getapplock` stored procedure.
+
+* **Fail-Fast Enforcement:** Before opening the `SNAPSHOT` transaction, Microservice B requests a lock for a custom resource token (`BookingHydrationLock`) with a `@LockTimeout = 0`.
+* **Behavior:** If Instance B-1 is already running the sync, and Instance B-2 receives a concurrent request, Instance B-2 immediately fails to acquire the token and returns an HTTP status code **`423 Locked`** back to the initiator without blocking threads or touching database tables.
+* **Crash-Safe Release:** Because the lock is tied strictly to the underlying database connection session, if an active worker crashes mid-stream, SQL Server automatically drops the dead connection session and frees the lock resource instantly for subsequent retries.
 
 ---
 
