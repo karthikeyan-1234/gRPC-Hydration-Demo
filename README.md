@@ -32,7 +32,7 @@ When executing an initial synchronization or bulk database hydration, choice of 
 ### Performance Matrix at a Glance
 
 | Metric | gRPC Streaming (Current POC) | HTTP/REST API (JSON Batches) | Message Broker (Queue/Topic) |
-| --- | --- | --- | --- |
+| :--- | :--- | :--- | :--- |
 | **Relative Speed** | **Fastest (Baseline 1x)** | **2x to 3x Slower** | **5x to 10x Slower** |
 | **Serialization Format** | Binary (Protobuf) | Text (JSON) | Text or Binary inside Envelope |
 | **Memory Footprint** | Extremely Low (Constant streaming) | High (Buffering large arrays) | Low on app, heavy on Broker |
