@@ -24,6 +24,110 @@ This repository contains a high-performance data synchronization and hydration p
 
 ---
 
+## Local Infrastructure Setup (Docker)
+
+To run this simulation locally, you need two isolated SQL Server instances running on different host ports to prevent connection string collisions.
+
+Execute the following commands in your terminal to spin up the required containers:
+
+```bash
+# Spin up SQL Server for Microservice A (Producer) on Port 1433
+docker run -e "ACCEPT_EULA=Y" \
+           -e "MSSQL_SA_PASSWORD=Hydration!Pass123" \
+           -p 1433:1433 \
+           --name mssql-service-a \
+           -d mcr.microsoft.com/mssql/server:2022-latest
+
+# Spin up SQL Server for Microservice B (Ingestion Engine) on Port 1434
+docker run -e "ACCEPT_EULA=Y" \
+           -e "MSSQL_SA_PASSWORD=Hydration!Pass123" \
+           -p 1434:1433 \
+           --name mssql-service-b \
+           -d mcr.microsoft.com/mssql/server:2022-latest
+
+```
+
+---
+
+## Database Initialization & Seeding Scripts
+
+Connect to your local database instances using your preferred database tool (SSMS, Azure Data Studio, etc.) and execute the following scripts.
+
+### 1. Setup Microservice A Database (Port 1433)
+
+Connect to **`localhost,1433`** using the credentials `sa` / `Hydration!Pass123`. Run this script to generate the database, structure the source table, and generate exactly 1,000 transactional booking records for the pipeline to extract.
+
+```sql
+CREATE DATABASE MicroserviceADb;
+GO
+
+USE MicroserviceADb;
+GO
+
+CREATE TABLE Bookings (
+    BookingId INT IDENTITY(1,1) PRIMARY KEY,
+    MemberName VARCHAR(100) NOT NULL,
+    ClassName VARCHAR(100) NOT NULL,
+    ScheduleDate DATETIME NOT NULL,
+    Price DECIMAL(18,2) NOT NULL,
+    CreatedAt DATETIME DEFAULT GETDATE()
+);
+GO
+
+-- Seed exactly 1,000 heavy transactional payload records
+SET NOCOUNT ON;
+DECLARE @Counter INT = 1;
+
+WHILE @Counter <= 1000
+BEGIN
+    INSERT INTO Bookings (MemberName, ClassName, ScheduleDate, Price)
+    VALUES (
+        'Member_Name_' + CAST(@Counter AS VARCHAR(10)),
+        CASE WHEN @Counter % 3 = 0 THEN 'HIIT Functional Circuit'
+             WHEN @Counter % 3 = 1 THEN 'Strength & Conditioning'
+             ELSE 'Cardio Blast Pro' END,
+        DATEADD(DAY, (@Counter % 30), GETDATE()),
+        45.00 + (@Counter % 5)
+    );
+    SET @Counter = @Counter + 1;
+END;
+GO
+
+-- Verify rows have seeded correctly
+SELECT COUNT(*) AS [Total Seeded Records] FROM Bookings;
+GO
+
+```
+
+### 2. Setup Microservice B Database (Port 1434)
+
+Connect to **`localhost,1434`** using the credentials `sa` / `Hydration!Pass123`. Run this script to generate the target ingestion database, turn on **Snapshot Isolation** capability, and configure the clean ingestion landing table.
+
+```sql
+CREATE DATABASE MicroserviceBDb;
+GO
+
+-- CRITICAL STEP: Turn on Row Versioning for Snapshot Isolation
+ALTER DATABASE MicroserviceBDb SET ALLOW_SNAPSHOT_ISOLATION ON;
+GO
+
+USE MicroserviceBDb;
+GO
+
+CREATE TABLE SyncedBookings (
+    BookingId INT PRIMARY KEY, -- Maintained from source service mapping
+    MemberName VARCHAR(100) NOT NULL,
+    ClassName VARCHAR(100) NOT NULL,
+    ScheduleDate DATETIME NOT NULL,
+    Price DECIMAL(18,2) NOT NULL,
+    SyncedAt DATETIME DEFAULT GETDATE()
+);
+GO
+
+```
+
+---
+
 ## Azure App Service Architecture & Cloud Routing
 
 When migrating this architecture from `localhost` to managed cloud infrastructure on Azure App Service, unencrypted HTTP/2 loopback channels are no longer viable. Traffic must pass through Azure's Front-End Proxy (Layer 7 Load Balancer), which enforces strict routing behaviors depending on the protocol.
