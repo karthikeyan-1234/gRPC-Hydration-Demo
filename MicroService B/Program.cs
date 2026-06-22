@@ -32,7 +32,15 @@ app.MapPost("/api/sync-trigger", async (DataSyncProcessor processor, Cancellatio
     try
     {
         await processor.RunHydrationPipelineAsync(ct);
-        return Results.Ok(new { Status = "Success", Message = "Data synchronized." });
+        return Results.Ok(new { Status = "Success", Message = "Data synchronized successfully." });
+    }
+    catch (InvalidOperationException lockEx)
+    {
+        // Return a clean 423 Locked state to indicate a scale out concurrency block
+        return Results.Json(
+            statusCode: StatusCodes.Status423Locked,
+            data: new { Status = "Blocked", Message = lockEx.Message }
+        );
     }
     catch (Exception ex)
     {
